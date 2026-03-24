@@ -276,15 +276,15 @@ def run_basket_backtest(
 
 
 @app.command()
-def run_phase4(
+def run_final_judgment_experiments(
     config: str = typer.Option("configs/paper_reproduction.yaml", "--config", "-c"),
 ) -> None:
-    """Run Phase 4: final 3 experiments + integration to determine if strategy reaches target."""
+    """Run Final judgment: final 3 experiments + integration to determine if strategy reaches target."""
     from pathlib import Path
-    from .phase4_runner import run_all_phase4
+    from .final_judgment_runner import run_all_final_judgment
 
-    typer.echo("Running Phase 4 experiments (this may take several minutes)...")
-    results = run_all_phase4(config)
+    typer.echo("Running Final judgment experiments (this may take several minutes)...")
+    results = run_all_final_judgment(config)
 
     def _fmt(r, label):
         tn = r.get("sub_n", {}).get("Test", {})
@@ -366,16 +366,16 @@ def run_phase4(
             typer.echo(">>> FAIL: Strategy does not reach viable threshold.")
 
     # Save
-    out = Path("reports/phase4/final_phase4")
+    out = Path("reports/final_judgment/report")
     out.mkdir(parents=True, exist_ok=True)
     # We'll generate the report in-line
-    _generate_phase4_report(results, out)
+    _generate_final_judgment_report(results, out)
     typer.echo(f"\nReport saved to {out}/")
 
 
-def _generate_phase4_report(results, out_dir):
-    """Generate Phase 4 final findings report."""
-    lines = ["# Phase 4: 最終判断レポート", ""]
+def _generate_final_judgment_report(results, out_dir):
+    """Generate Final judgment final findings report."""
+    lines = ["# 最終判断レポート: 主戦力候補に届くか", ""]
 
     def _table(section_results, title):
         lines.append(f"## {title}")

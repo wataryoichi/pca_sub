@@ -1,6 +1,6 @@
-"""Phase 4 experiment runner: 3 experiments + final integration.
+"""Final judgment experiment runner: 3 experiments + integration.
 
-Runs all experiments, collects results, and generates final judgment.
+Runs walk-forward K, composite filters, weight schemes, and final combos.
 """
 
 from __future__ import annotations
@@ -271,7 +271,7 @@ def run_final(data: dict, exp1_result: dict, exp2_result: dict, exp3_result: dic
     return results
 
 
-def run_all_phase4(config_path: str) -> dict:
+def run_all_final_judgment(config_path: str) -> dict:
     """Run all Phase 4 experiments and return results."""
     cfg = load_config(config_path)
     data = _prepare(cfg)

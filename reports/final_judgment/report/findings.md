@@ -1,4 +1,4 @@
-# Phase 4: 最終判断レポート
+# 最終判断レポート: 主戦力候補に届くか
 
 ## Experiment 1: Walk-Forward K
 K distribution: {3: 1484, 4: 411, 5: 717}
