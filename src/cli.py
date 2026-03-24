@@ -108,6 +108,51 @@ def generate_report(
     typer.echo(f"Report saved to {cfg.output.reports_dir}/")
 
 
+@app.command()
+def run_sensitivity(
+    config: str = typer.Option("configs/paper_reproduction.yaml", "--config", "-c"),
+) -> None:
+    """Run parameter sensitivity analysis."""
+    from .config import load_config
+    from .experiments import (
+        generate_sensitivity_plots,
+        run_multi_sensitivity,
+        save_sensitivity_results,
+    )
+
+    cfg = load_config(config)
+
+    experiments = {
+        "strategy.window_length": [20, 40, 60, 120],
+        "strategy.lambda_reg": [0.0, 0.3, 0.6, 0.9, 0.95],
+        "strategy.n_components": [1, 2, 3, 4, 5],
+        "strategy.quantile": [0.1, 0.2, 0.3],
+    }
+
+    results = run_multi_sensitivity(config, experiments)
+
+    out_dir = cfg.output.results_dir
+    save_sensitivity_results(results, f"{out_dir}/sensitivity")
+    generate_sensitivity_plots(results, f"{out_dir}/plots", cfg.output.plots_format)
+
+    # Print summary
+    for param_name, df in results.items():
+        typer.echo(f"\n{'='*70}")
+        typer.echo(f"Sensitivity: {param_name}")
+        typer.echo(f"{'='*70}")
+        pca_sub = df[df["strategy"] == "PCA_SUB"]
+        if not pca_sub.empty:
+            typer.echo(f"{'Value':>10} {'AR%':>8} {'R/R':>8} {'MDD%':>8} {'BE bp':>8}")
+            typer.echo("-" * 50)
+            for _, row in pca_sub.iterrows():
+                typer.echo(
+                    f"{str(row['param_value']):>10} {row['AR']:>8.2f} "
+                    f"{row['R/R']:>8.2f} {row['MDD']:>8.2f} {row['breakeven_bps']:>8.1f}"
+                )
+
+    typer.echo(f"\nResults saved to {out_dir}/sensitivity/")
+
+
 def _save_results(cfg, results) -> None:
     """Save signals, portfolios, metrics, and plots."""
     import json
