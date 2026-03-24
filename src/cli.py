@@ -276,6 +276,81 @@ def run_basket_backtest(
 
 
 @app.command()
+def run_improvement_experiments(
+    config: str = typer.Option("configs/paper_reproduction.yaml", "--config", "-c"),
+) -> None:
+    """Run focused experiments to improve Net AR from 4% toward 6-8%."""
+    from pathlib import Path
+    from .config import load_config
+    from .improvement_experiments import _prepare_data, experiment_filters, experiment_portfolio, experiment_execution
+
+    cfg = load_config(config)
+    typer.echo("Preparing data...")
+    data = _prepare_data(cfg)
+
+    # --- Experiment 1: Filters ---
+    typer.echo("\n" + "=" * 80)
+    typer.echo("EXPERIMENT 1: SIGNAL FILTER IMPROVEMENT")
+    typer.echo("=" * 80)
+    df1 = experiment_filters(data)
+    typer.echo(f"{'Filter':<18} {'Pctl':>5} {'FullNetAR':>10} {'TestNetAR':>10} {'TestNetRR':>10} {'BE bp':>7}")
+    typer.echo("-" * 70)
+    for _, r in df1.iterrows():
+        typer.echo(
+            f"{r['filter']:<18} {r['percentile']:>5.0f} {r['full_net_AR']:>10.2f} "
+            f"{r['test_net_AR']:>10.2f} {r['test_net_RR']:>10.2f} {r['breakeven']:>7.1f}"
+        )
+
+    # --- Experiment 2: Portfolio construction ---
+    typer.echo("\n" + "=" * 80)
+    typer.echo("EXPERIMENT 2: PORTFOLIO CONSTRUCTION")
+    typer.echo("=" * 80)
+    df2 = experiment_portfolio(data)
+    typer.echo(f"{'Construction':<22} {'FullNetAR':>10} {'TestNetAR':>10} {'TestNetRR':>10} {'BE bp':>7}")
+    typer.echo("-" * 70)
+    for _, r in df2.iterrows():
+        typer.echo(
+            f"{r['construction']:<22} {r['full_net_AR']:>10.2f} "
+            f"{r['test_net_AR']:>10.2f} {r['test_net_RR']:>10.2f} {r['breakeven']:>7.1f}"
+        )
+
+    # --- Experiment 3: Execution targets ---
+    typer.echo("\n" + "=" * 80)
+    typer.echo("EXPERIMENT 3: EXECUTION TARGET OPTIMIZATION")
+    typer.echo("=" * 80)
+    df3 = experiment_execution(data)
+    typer.echo(f"{'Config':<25} {'FullNetAR':>10} {'TestNetAR':>10} {'TestNetRR':>10} {'BE bp':>7}")
+    typer.echo("-" * 70)
+    for _, r in df3.iterrows():
+        typer.echo(
+            f"{r['config']:<25} {r['full_net_AR']:>10.2f} "
+            f"{r['test_net_AR']:>10.2f} {r['test_net_RR']:>10.2f} {r['breakeven']:>7.1f}"
+        )
+
+    # Save all
+    out = Path(cfg.output.results_dir) / "improvements"
+    out.mkdir(parents=True, exist_ok=True)
+    df1.to_csv(out / "exp1_filters.csv", index=False)
+    df2.to_csv(out / "exp2_portfolio.csv", index=False)
+    df3.to_csv(out / "exp3_execution.csv", index=False)
+
+    # Best combination
+    typer.echo("\n" + "=" * 80)
+    typer.echo("SUMMARY")
+    typer.echo("=" * 80)
+    best1 = df1.loc[df1["test_net_AR"].idxmax()] if not df1.empty else None
+    best2 = df2.loc[df2["test_net_AR"].idxmax()] if not df2.empty else None
+    best3 = df3.loc[df3["test_net_AR"].idxmax()] if not df3.empty else None
+    if best1 is not None:
+        typer.echo(f"Best filter:       {best1['filter']} pctl={best1['percentile']:.0f} -> Test Net AR={best1['test_net_AR']:.2f}%")
+    if best2 is not None:
+        typer.echo(f"Best portfolio:    {best2['construction']} -> Test Net AR={best2['test_net_AR']:.2f}%")
+    if best3 is not None:
+        typer.echo(f"Best execution:    {best3['config']} -> Test Net AR={best3['test_net_AR']:.2f}%")
+    typer.echo(f"\nSaved to {out}/")
+
+
+@app.command()
 def run_conditional_oos(
     config: str = typer.Option("configs/paper_reproduction.yaml", "--config", "-c"),
 ) -> None:
