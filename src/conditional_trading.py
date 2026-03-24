@@ -106,3 +106,84 @@ def run_conditional_frontier(
         })
 
     return pd.DataFrame(records)
+
+
+def run_conditional_oos(
+    signal: pd.DataFrame,
+    jp_oc_returns: pd.DataFrame,
+    periods: dict[str, tuple[str, str]],
+    quantile: float = 0.3,
+    target_percentiles: list[float] | None = None,
+    cost_one_way_bps: float = 5.0,
+    cost_short_bps: float = 3.0,
+) -> pd.DataFrame:
+    """Run conditional trading for multiple sub-periods.
+
+    For each period, compute signal strength thresholds using ONLY in-period data
+    (no forward-looking bias).
+
+    Args:
+        signal: Full signal DataFrame
+        jp_oc_returns: Full JP OC returns
+        periods: Dict of period_name -> (start, end)
+        quantile: Portfolio quantile
+        target_percentiles: List of percentiles to evaluate (default: [0, 50, 70, 80, 90])
+        cost_one_way_bps: One-way cost
+        cost_short_bps: Short extra cost
+
+    Returns:
+        DataFrame with results per period per percentile
+    """
+    if target_percentiles is None:
+        target_percentiles = [0, 50, 70, 80, 90]
+
+    strength = compute_signal_strength(signal)
+    records = []
+
+    for period_name, (start, end) in periods.items():
+        sig_period = signal.loc[start:end]
+        ret_period = jp_oc_returns.loc[start:end]
+        str_period = strength.loc[start:end]
+
+        if len(sig_period) < 20:
+            continue
+
+        for pct in target_percentiles:
+            # Threshold computed within this period only
+            thresh = np.nanpercentile(str_period, pct)
+            weights = build_conditional_weights(sig_period, str_period, thresh, quantile)
+            port_ret = compute_portfolio_returns(weights, ret_period).dropna()
+
+            trade_days = (weights.abs().sum(axis=1) > 0.01).sum()
+            total_days = len(sig_period)
+
+            if len(port_ret) < 5 or trade_days < 3:
+                continue
+
+            metrics_gross = compute_all_metrics(port_ret)
+
+            costs = compute_trading_cost(
+                weights.loc[port_ret.index],
+                one_way_bps=cost_one_way_bps,
+                short_extra_bps=cost_short_bps,
+            )
+            port_ret_net = apply_cost(port_ret, costs)
+            metrics_net = compute_all_metrics(port_ret_net)
+
+            trade_mask = weights.loc[port_ret.index].abs().sum(axis=1) > 0.01
+            trade_rets = port_ret[trade_mask]
+            avg_bps = trade_rets.mean() / 1e-4 if len(trade_rets) > 0 else 0
+
+            records.append({
+                "period": period_name,
+                "percentile": pct,
+                "trade_days": trade_days,
+                "trade_pct": trade_days / total_days * 100,
+                "gross_AR": metrics_gross["AR"],
+                "gross_RR": metrics_gross["R/R"],
+                "net_AR": metrics_net["AR"],
+                "net_RR": metrics_net["R/R"],
+                "avg_trade_bps": avg_bps,
+            })
+
+    return pd.DataFrame(records)

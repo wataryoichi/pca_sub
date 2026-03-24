@@ -227,6 +227,126 @@ def run_rebal_sensitivity(
 
 
 @app.command()
+def run_conditional_oos(
+    config: str = typer.Option("configs/paper_reproduction.yaml", "--config", "-c"),
+) -> None:
+    """Run conditional trading OOS validation across sub-periods."""
+    from pathlib import Path
+
+    import pandas as pd
+
+    from .calendar_align import build_aligned_dataset
+    from .conditional_trading import run_conditional_oos as _run_oos
+    from .config import load_config
+    from .covariance import compute_cfull
+    from .data_loader import build_price_panels, load_raw_data
+    from .signal_builder import build_all_signals
+
+    cfg = load_config(config)
+
+    raw_data = load_raw_data(cfg.data.raw_dir)
+    us_close, jp_close, jp_open, _ = build_price_panels(raw_data)
+    date_map, us_close_a, jp_close_a, jp_open_a = build_aligned_dataset(
+        us_close, jp_close, jp_open
+    )
+    us_cc = us_close_a / us_close_a.shift(1) - 1
+    us_cc.index = date_map["us_date"].values
+    jp_cc = jp_close_a / jp_close_a.shift(1) - 1
+    jp_cc.index = date_map["us_date"].values
+    jp_oc = pd.DataFrame(
+        jp_close_a.values / jp_open_a.values - 1,
+        index=pd.to_datetime(date_map["us_date"].values),
+        columns=jp_close.columns,
+    )
+    all_cc = pd.concat([us_cc, jp_cc], axis=1)
+    all_cc.index = pd.to_datetime(all_cc.index)
+
+    Cfull = compute_cfull(all_cc, cfg.cfull.start_date, cfg.cfull.end_date, cfg.strategy.window_length)
+    tickers_all = list(us_cc.columns) + list(jp_cc.columns)
+    signals = build_all_signals(
+        us_cc, jp_cc, cfg.strategy.window_length, cfg.strategy.n_components,
+        cfg.strategy.lambda_reg, Cfull, cfg.backtest.start_date, cfg.backtest.end_date, tickers_all,
+    )
+
+    periods = {
+        "Full (2015-2025)": ("2015-01-01", "2025-12-31"),
+        "Train (2015-2019)": ("2015-01-01", "2019-12-31"),
+        "Valid (2020-2022)": ("2020-01-01", "2022-12-31"),
+        "Test (2023-2025)": ("2023-01-01", "2025-12-31"),
+    }
+
+    df = _run_oos(signals["PCA_SUB"], jp_oc, periods, cfg.strategy.quantile)
+
+    for period in periods:
+        sub = df[df["period"] == period]
+        if sub.empty:
+            continue
+        typer.echo(f"\n{'='*75}")
+        typer.echo(f"{period}")
+        typer.echo(f"{'Pctl':>6} {'Days':>6} {'Trade%':>8} {'GrossAR':>9} {'GrossR/R':>9} {'NetAR':>9} {'NetR/R':>9} {'Bps':>6}")
+        typer.echo("-" * 75)
+        for _, row in sub.iterrows():
+            typer.echo(
+                f"{row['percentile']:>6.0f} {int(row['trade_days']):>6} {row['trade_pct']:>7.1f}% "
+                f"{row['gross_AR']:>9.2f} {row['gross_RR']:>9.2f} "
+                f"{row['net_AR']:>9.2f} {row['net_RR']:>9.2f} {row['avg_trade_bps']:>6.1f}"
+            )
+
+    out = Path(cfg.output.results_dir) / "conditional"
+    out.mkdir(parents=True, exist_ok=True)
+    df.to_csv(out / "oos_validation.csv", index=False)
+    typer.echo(f"\nSaved to {out}/")
+
+
+@app.command()
+def run_walk_forward_k(
+    config: str = typer.Option("configs/paper_reproduction.yaml", "--config", "-c"),
+) -> None:
+    """Run walk-forward K selection and evaluation."""
+    from pathlib import Path
+
+    from .config import load_config
+    from .walk_forward import walk_forward_k
+
+    cfg = load_config(config)
+
+    typer.echo("Running walk-forward K selection...")
+    df = walk_forward_k(
+        base_cfg=cfg,
+        k_candidates=[2, 3, 4, 5],
+        train_years=3,
+        test_years=1,
+        start_year=2016,
+        end_year=2025,
+    )
+
+    typer.echo(f"\n{'='*75}")
+    typer.echo("WALK-FORWARD K SELECTION (PCA_SUB)")
+    typer.echo(f"{'='*75}")
+    typer.echo(f"{'Test Period':<20} {'K':>4} {'TrainR/R':>9} {'TestAR%':>9} {'TestR/R':>9} {'TestMDD%':>9} {'BE bp':>7}")
+    typer.echo("-" * 75)
+    for _, row in df.iterrows():
+        typer.echo(
+            f"{row['test_start'][:4]:<20} {int(row['selected_k']):>4} "
+            f"{row['train_RR']:>9.2f} {row['test_AR']:>9.2f} "
+            f"{row['test_RR']:>9.2f} {row['test_MDD']:>9.2f} {row['test_BE']:>7.1f}"
+        )
+
+    # Aggregate
+    if not df.empty:
+        avg_rr = df["test_RR"].mean()
+        avg_ar = df["test_AR"].mean()
+        typer.echo("-" * 75)
+        typer.echo(f"{'Average':<20} {'':>4} {'':>9} {avg_ar:>9.2f} {avg_rr:>9.2f}")
+    typer.echo("=" * 75)
+
+    out = Path(cfg.output.results_dir) / "walk_forward"
+    out.mkdir(parents=True, exist_ok=True)
+    df.to_csv(out / "k_selection.csv", index=False)
+    typer.echo(f"\nSaved to {out}/")
+
+
+@app.command()
 def run_factor_analysis(
     config: str = typer.Option("configs/paper_reproduction.yaml", "--config", "-c"),
 ) -> None:
