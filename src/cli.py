@@ -227,6 +227,55 @@ def run_rebal_sensitivity(
 
 
 @app.command()
+def run_basket_backtest(
+    config: str = typer.Option("configs/paper_reproduction.yaml", "--config", "-c"),
+    filter_pct: float = typer.Option(0, "--filter-pct", help="Signal strength percentile filter (0=no filter, 90=top 10%)"),
+    cost_bps: float = typer.Option(3.0, "--cost-bps", help="One-way cost in bps for stocks"),
+) -> None:
+    """Run backtest using individual stock basket instead of ETFs."""
+    from .basket_backtest import run_basket_backtest as _run
+    from .config import load_config
+
+    cfg = load_config(config)
+    filter_val = filter_pct if filter_pct > 0 else None
+
+    typer.echo(f"Running stock basket backtest (filter={filter_pct}%, cost={cost_bps}bp)...")
+    result = _run(cfg, signal_filter_pct=filter_val, cost_one_way_bps=cost_bps, cost_short_bps=2.0)
+
+    m_g = result["metrics_gross"]
+    m_n = result["metrics_net"]
+    be = result["breakeven"]
+
+    typer.echo(f"\n{'='*70}")
+    typer.echo(f"STOCK BASKET BACKTEST — PCA_SUB (cost={cost_bps}bp + 2bp short)")
+    if filter_val:
+        typer.echo(f"Signal filter: top {100 - filter_pct:.0f}% of days")
+    typer.echo(f"{'='*70}")
+    typer.echo(f"  Gross: AR={m_g['AR']:.2f}%, R/R={m_g['R/R']:.2f}, MDD={m_g['MDD']:.2f}%")
+    typer.echo(f"  Net:   AR={m_n['AR']:.2f}%, R/R={m_n['R/R']:.2f}, MDD={m_n['MDD']:.2f}%")
+    typer.echo(f"  Breakeven: {be['breakeven_one_way_bps']:.1f} bp one-way")
+
+    # Sub-period
+    typer.echo(f"\n{'Period':<25} {'GrossAR%':>10} {'GrossR/R':>10} {'NetAR%':>10} {'NetR/R':>10}")
+    typer.echo("-" * 70)
+    for period_name in result["sub_gross"]:
+        sg = result["sub_gross"][period_name]
+        sn = result["sub_net"][period_name]
+        typer.echo(
+            f"{period_name:<25} {sg['AR']:>10.2f} {sg['R/R']:>10.2f} "
+            f"{sn['AR']:>10.2f} {sn['R/R']:>10.2f}"
+        )
+    typer.echo("=" * 70)
+
+    from pathlib import Path
+    out = Path(cfg.output.results_dir) / "basket"
+    out.mkdir(parents=True, exist_ok=True)
+    result["port_ret"].to_csv(out / "basket_returns_gross.csv", header=True)
+    result["port_ret_net"].to_csv(out / "basket_returns_net.csv", header=True)
+    typer.echo(f"\nSaved to {out}/")
+
+
+@app.command()
 def run_conditional_oos(
     config: str = typer.Option("configs/paper_reproduction.yaml", "--config", "-c"),
 ) -> None:
