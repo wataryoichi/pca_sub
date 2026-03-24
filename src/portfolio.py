@@ -74,6 +74,45 @@ def compute_portfolio_returns(
     return port_ret
 
 
+def build_rebalance_weights(
+    signal: pd.DataFrame,
+    quantile: float = 0.3,
+    rebal_freq: int = 5,
+    jp_cc_returns: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Build long/short weights with reduced rebalancing frequency.
+
+    Instead of rebuilding every day, hold positions for `rebal_freq` days.
+    Between rebalances, returns accumulate on the held positions using
+    close-to-close returns (not open-to-close).
+
+    Args:
+        signal: (date x JP tickers) signal DataFrame
+        quantile: q, fraction for long/short legs
+        rebal_freq: Number of days between rebalances
+        jp_cc_returns: JP close-to-close returns for position carry
+            (if None, weights are simply held flat between rebalances)
+
+    Returns:
+        (date x JP tickers) weight DataFrame
+    """
+    # First build daily ideal weights
+    ideal = build_long_short_weights(signal, quantile)
+
+    # Only rebalance every rebal_freq days
+    weights = pd.DataFrame(0.0, index=ideal.index, columns=ideal.columns)
+    last_rebal = None
+
+    for i, date in enumerate(ideal.index):
+        if i % rebal_freq == 0:
+            weights.loc[date] = ideal.loc[date]
+            last_rebal = date
+        elif last_rebal is not None:
+            weights.loc[date] = weights.loc[ideal.index[i - 1]]
+
+    return weights
+
+
 def compute_turnover(weights: pd.DataFrame) -> pd.Series:
     """Compute daily turnover as sum of absolute weight changes."""
     diff = weights.diff().abs().sum(axis=1)

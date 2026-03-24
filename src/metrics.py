@@ -78,6 +78,32 @@ def compute_drawdown_series(returns: pd.Series) -> pd.Series:
     return wealth / running_max - 1
 
 
+def compute_subperiod_metrics(
+    returns: pd.Series,
+    periods: dict[str, tuple[str, str]],
+    periods_per_year: float = 252,
+) -> dict[str, dict]:
+    """Compute metrics for multiple sub-periods.
+
+    Args:
+        returns: Daily return series
+        periods: Dict mapping period name -> (start_date, end_date)
+
+    Returns:
+        Dict mapping period name -> metrics dict
+    """
+    result = {}
+    for name, (start, end) in periods.items():
+        sub = returns.loc[start:end]
+        if len(sub) < 5:
+            result[name] = {"AR": float("nan"), "RISK": float("nan"),
+                           "R/R": float("nan"), "MDD": float("nan"),
+                           "Hit Ratio": float("nan"), "N_days": len(sub)}
+        else:
+            result[name] = compute_all_metrics(sub, periods_per_year)
+    return result
+
+
 def compute_rolling_sharpe(
     returns: pd.Series,
     window: int = 60,

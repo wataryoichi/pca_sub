@@ -153,6 +153,79 @@ def run_sensitivity(
     typer.echo(f"\nResults saved to {out_dir}/sensitivity/")
 
 
+@app.command()
+def run_oos_validation(
+    config: str = typer.Option("configs/paper_reproduction.yaml", "--config", "-c"),
+) -> None:
+    """Run out-of-sample validation with sub-period analysis."""
+    from .config import load_config
+    from .experiments import run_subperiod_analysis
+
+    cfg = load_config(config)
+
+    periods = {
+        "Full (2015-2025)": ("2015-01-01", "2025-12-31"),
+        "Train (2015-2019)": ("2015-01-01", "2019-12-31"),
+        "Validation (2020-2022)": ("2020-01-01", "2022-12-31"),
+        "Test (2023-2025)": ("2023-01-01", "2025-12-31"),
+    }
+
+    df = run_subperiod_analysis(cfg, periods)
+
+    # Print results
+    for period_name in periods:
+        sub = df[df["period"] == period_name]
+        typer.echo(f"\n{'='*70}")
+        typer.echo(f"{period_name}")
+        typer.echo(f"{'Strategy':<15} {'AR%':>8} {'RISK%':>8} {'R/R':>8} {'MDD%':>8} {'BE bp':>8}")
+        typer.echo("-" * 70)
+        for _, row in sub.iterrows():
+            typer.echo(
+                f"{row['strategy']:<15} {row['AR']:>8.2f} {row['RISK']:>8.2f} "
+                f"{row['R/R']:>8.2f} {row['MDD']:>8.2f} {row['breakeven_bps']:>8.1f}"
+            )
+
+    # Save
+    out_dir = cfg.output.results_dir
+    from pathlib import Path
+    Path(f"{out_dir}/oos").mkdir(parents=True, exist_ok=True)
+    df.to_csv(f"{out_dir}/oos/subperiod_metrics.csv", index=False)
+    typer.echo(f"\nSaved to {out_dir}/oos/")
+
+
+@app.command()
+def run_rebal_sensitivity(
+    config: str = typer.Option("configs/paper_reproduction.yaml", "--config", "-c"),
+) -> None:
+    """Run rebalancing frequency sensitivity analysis."""
+    from .config import load_config
+    from .experiments import run_sensitivity
+
+    cfg = load_config(config)
+
+    # Test rebalancing frequencies: 1 (daily), 2, 3, 5, 10, 20
+    rebal_values = [1, 2, 3, 5, 10, 20]
+    df = run_sensitivity(cfg, "strategy.rebal_freq", rebal_values)
+
+    typer.echo(f"\n{'='*70}")
+    typer.echo("Rebalancing Frequency Sensitivity (PCA_SUB)")
+    typer.echo(f"{'Freq':>6} {'AR%':>8} {'R/R':>8} {'MDD%':>8} {'BE bp':>8} {'Turnover':>10}")
+    typer.echo("-" * 70)
+    sub = df[df["strategy"] == "PCA_SUB"]
+    for _, row in sub.iterrows():
+        typer.echo(
+            f"{int(row['param_value']):>6} {row['AR']:>8.2f} "
+            f"{row['R/R']:>8.2f} {row['MDD']:>8.2f} {row['breakeven_bps']:>8.1f}"
+        )
+
+    # Save
+    out_dir = cfg.output.results_dir
+    from pathlib import Path
+    Path(f"{out_dir}/sensitivity").mkdir(parents=True, exist_ok=True)
+    df.to_csv(f"{out_dir}/sensitivity/rebal_freq.csv", index=False)
+    typer.echo(f"\nSaved to {out_dir}/sensitivity/")
+
+
 def _save_results(cfg, results) -> None:
     """Save signals, portfolios, metrics, and plots."""
     import json

@@ -51,24 +51,31 @@ def compute_trading_cost(
     """
     bps = 1e-4
 
-    # Round-trip trading cost: 2 * one_way per gross dollar
-    gross = weights.abs().sum(axis=1)  # ≈ 2.0
-    trade_cost = 2.0 * one_way_bps * bps * gross
+    # Turnover-based trading cost: one_way per dollar traded
+    # Turnover = sum(|w_t - w_{t-1}|), which captures actual trading activity
+    # For daily strategy: turnover ≈ 4.0 (full rebuild each day)
+    # For multi-day hold: turnover = 0 on non-rebalance days
+    turnover = weights.diff().abs().sum(axis=1)
+    # First day: treat as full entry
+    turnover.iloc[0] = weights.iloc[0].abs().sum()
+    trade_cost = one_way_bps * bps * turnover
 
-    # Short borrow cost (daily): applied to short leg only
+    # Short borrow cost (daily): applied to short leg every day held
     short_exposure = weights.clip(upper=0).abs().sum(axis=1)  # ≈ 1.0
     short_cost = short_extra_bps * bps * short_exposure
 
     total = trade_cost + short_cost
 
-    # Illiquid extra cost (additional one-way cost, applied round-trip)
+    # Illiquid extra cost (on turnover, not gross exposure)
     if illiquid_mask is not None:
         common_idx = weights.index.intersection(illiquid_mask.index)
         common_cols = weights.columns.intersection(illiquid_mask.columns)
-        illiq_w = weights.loc[common_idx, common_cols].abs() * illiquid_mask.loc[
+        w_diff = weights.diff().abs()
+        w_diff.iloc[0] = weights.iloc[0].abs()
+        illiq_turnover = w_diff.loc[common_idx, common_cols] * illiquid_mask.loc[
             common_idx, common_cols
         ].astype(float)
-        illiq_cost = 2.0 * illiquid_extra_bps * bps * illiq_w.sum(axis=1)
+        illiq_cost = illiquid_extra_bps * bps * illiq_turnover.sum(axis=1)
         total = total.add(illiq_cost, fill_value=0.0)
 
     return total
@@ -93,22 +100,23 @@ def cost_breakeven_analysis(
     """Compute breakeven cost levels.
 
     Returns the one-way cost (bps) at which the strategy breaks even.
+    Uses actual turnover to compute cost, not gross exposure.
     """
     bps = 1e-4
-    gross = weights.loc[gross_returns.index].abs().sum(axis=1)
-    avg_gross = gross.mean()
+    w = weights.loc[gross_returns.index]
+    turnover = w.diff().abs().sum(axis=1)
+    turnover.iloc[0] = w.iloc[0].abs().sum()
+    avg_turnover = turnover.mean()
     avg_daily_return = gross_returns.mean()
 
-    # breakeven: avg_return = 2 * one_way_bps * bps * avg_gross
-    # one_way_bps = avg_return / (2 * bps * avg_gross)
-    if avg_gross < 1e-12:
+    # breakeven: avg_return = one_way_bps * bps * avg_turnover
+    if avg_turnover < 1e-12:
         breakeven_bps = 0.0
     else:
-        breakeven_bps = avg_daily_return / (2.0 * bps * avg_gross)
+        breakeven_bps = avg_daily_return / (bps * avg_turnover)
 
     return {
         "breakeven_one_way_bps": breakeven_bps,
         "avg_daily_gross_return_bps": avg_daily_return / bps,
-        "avg_daily_cost_at_5bp": 2.0 * 5.0 * avg_gross * bps / bps,
-        "avg_daily_cost_at_3bp": 2.0 * 3.0 * avg_gross * bps / bps,
+        "avg_daily_turnover": avg_turnover,
     }

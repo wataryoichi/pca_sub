@@ -116,6 +116,82 @@ def _set_param(cfg: Config, param_path: str, value) -> Config:
     return cfg_copy
 
 
+def run_subperiod_analysis(
+    base_cfg: Config,
+    periods: dict[str, tuple[str, str]],
+) -> pd.DataFrame:
+    """Run backtest and compute metrics for each sub-period.
+
+    Args:
+        base_cfg: Configuration (backtest covers full period)
+        periods: Dict mapping period name -> (start, end)
+
+    Returns:
+        DataFrame with sub-period metrics for each strategy
+    """
+    from .metrics import compute_subperiod_metrics
+
+    results = run_backtest(base_cfg)
+    records: list[dict] = []
+
+    for strat_name, res in results.items():
+        sub_metrics = compute_subperiod_metrics(res.daily_returns, periods)
+        for period_name, m in sub_metrics.items():
+            be = cost_breakeven_analysis(
+                res.daily_returns.loc[periods[period_name][0]:periods[period_name][1]],
+                res.weights,
+            )
+            records.append({
+                "period": period_name,
+                "strategy": strat_name,
+                **m,
+                "breakeven_bps": be["breakeven_one_way_bps"],
+            })
+
+    return pd.DataFrame(records)
+
+
+def run_cfull_comparison(
+    base_config_path: str,
+    cfull_configs: dict[str, dict],
+) -> pd.DataFrame:
+    """Compare different Cfull construction methods.
+
+    Args:
+        base_config_path: Path to base config
+        cfull_configs: Dict mapping config name -> cfull override dict
+            e.g., {"fixed_2010_2014": {"start_date": "2010-01-01", "end_date": "2014-12-31", "mode": "fixed"}}
+
+    Returns:
+        DataFrame with metrics for each Cfull configuration
+    """
+    base_cfg = load_config(base_config_path)
+    records: list[dict] = []
+
+    for cfull_name, cfull_override in cfull_configs.items():
+        logger.info(f"Running Cfull config: {cfull_name}")
+        cfg = copy.deepcopy(base_cfg)
+        for key, val in cfull_override.items():
+            setattr(cfg.cfull, key, val)
+
+        try:
+            results = run_backtest(cfg)
+        except Exception as e:
+            logger.error(f"  Failed: {e}")
+            continue
+
+        for strat_name, res in results.items():
+            be = cost_breakeven_analysis(res.daily_returns, res.weights)
+            records.append({
+                "cfull_config": cfull_name,
+                "strategy": strat_name,
+                **res.metrics,
+                "breakeven_bps": be["breakeven_one_way_bps"],
+            })
+
+    return pd.DataFrame(records)
+
+
 def save_sensitivity_results(
     results: dict[str, pd.DataFrame],
     output_dir: str | Path,

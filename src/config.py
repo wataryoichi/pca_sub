@@ -16,6 +16,7 @@ class StrategyConfig:
     n_components: int = 3
     quantile: float = 0.3
     prior_dim: int = 3
+    rebal_freq: int = 1  # 1 = daily (default), 5 = weekly, etc.
 
 
 @dataclass

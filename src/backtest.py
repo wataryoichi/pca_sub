@@ -16,7 +16,7 @@ from .data_loader import build_price_panels, load_raw_data
 from .calendar_align import align_us_jp_dates, build_aligned_dataset
 from .liquidity import apply_liquidity_filter, build_liquidity_mask, liquidity_exclusion_report
 from .metrics import compute_all_metrics
-from .portfolio import build_long_short_weights, compute_portfolio_returns, compute_turnover
+from .portfolio import build_long_short_weights, build_rebalance_weights, compute_portfolio_returns, compute_turnover
 from .returns import close_to_close_return, open_to_close_return
 from .signal_builder import build_all_signals
 
@@ -148,7 +148,14 @@ def run_backtest(cfg: Config) -> dict[str, BacktestResult]:
         if cfg.liquidity.enabled and illiquid_mask is not None:
             sig_filtered = apply_liquidity_filter(sig, illiquid_mask)
 
-        weights = build_long_short_weights(sig_filtered, quantile=cfg.strategy.quantile)
+        if cfg.strategy.rebal_freq > 1:
+            weights = build_rebalance_weights(
+                sig_filtered,
+                quantile=cfg.strategy.quantile,
+                rebal_freq=cfg.strategy.rebal_freq,
+            )
+        else:
+            weights = build_long_short_weights(sig_filtered, quantile=cfg.strategy.quantile)
         port_ret = compute_portfolio_returns(weights, jp_oc_aligned)
         turnover = compute_turnover(weights)
 
