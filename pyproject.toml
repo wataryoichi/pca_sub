@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "pca-sub"
+version = "0.1.0"
+description = "Lead-lag strategies for Japanese and U.S. sectors using subspace regularization PCA"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "matplotlib>=3.7",
+    "pyyaml>=6.0",
+    "typer>=0.9",
+    "yfinance>=0.2",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[project.scripts]
+pca-sub = "src.cli:app"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

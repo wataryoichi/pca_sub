@@ -1,0 +1,24 @@
+# Paper reproduction configuration
+# Inherits from base.yaml, overrides nothing (base matches paper defaults)
+inherit: base.yaml
+
+strategy:
+  window_length: 60
+  lambda_reg: 0.9
+  n_components: 3
+  quantile: 0.3
+
+cfull:
+  start_date: "2010-01-01"
+  end_date: "2014-12-31"
+  mode: fixed
+
+backtest:
+  start_date: "2015-01-01"
+  end_date: "2025-12-31"
+
+cost:
+  enabled: false
+
+liquidity:
+  enabled: false
