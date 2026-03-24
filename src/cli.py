@@ -49,18 +49,47 @@ def run_backtest(
     results = _run(cfg)
 
     # Print summary table
-    typer.echo("\n" + "=" * 60)
-    typer.echo("BACKTEST RESULTS")
-    typer.echo("=" * 60)
+    has_cost = cfg.cost.enabled
+    has_liq = cfg.liquidity.enabled
+
+    typer.echo("\n" + "=" * 70)
+    typer.echo(f"BACKTEST RESULTS (cost={'ON' if has_cost else 'OFF'}, liquidity={'ON' if has_liq else 'OFF'})")
+    typer.echo("=" * 70)
+
+    # Gross results
+    typer.echo(f"\n{'[GROSS]':<15}")
     typer.echo(f"{'Strategy':<15} {'AR%':>8} {'RISK%':>8} {'R/R':>8} {'MDD%':>8} {'Hit%':>8}")
-    typer.echo("-" * 60)
+    typer.echo("-" * 70)
     for name, res in results.items():
         m = res.metrics
         typer.echo(
             f"{name:<15} {m['AR']:>8.2f} {m['RISK']:>8.2f} "
             f"{m['R/R']:>8.2f} {m['MDD']:>8.2f} {m['Hit Ratio']*100:>8.1f}"
         )
-    typer.echo("=" * 60)
+
+    # Net results (if cost enabled)
+    if has_cost:
+        typer.echo(f"\n{'[NET]':<15} (cost: {cfg.cost.one_way_bps}bp one-way + {cfg.cost.short_extra_bps}bp short)")
+        typer.echo(f"{'Strategy':<15} {'AR%':>8} {'RISK%':>8} {'R/R':>8} {'MDD%':>8} {'Hit%':>8}")
+        typer.echo("-" * 70)
+        for name, res in results.items():
+            if res.metrics_net:
+                m = res.metrics_net
+                typer.echo(
+                    f"{name:<15} {m['AR']:>8.2f} {m['RISK']:>8.2f} "
+                    f"{m['R/R']:>8.2f} {m['MDD']:>8.2f} {m['Hit Ratio']*100:>8.1f}"
+                )
+
+    # Breakeven analysis
+    typer.echo("\n[BREAKEVEN ANALYSIS]")
+    from .cost_model import cost_breakeven_analysis
+    for name, res in results.items():
+        be = cost_breakeven_analysis(res.daily_returns, res.weights)
+        typer.echo(
+            f"  {name}: breakeven one-way = {be['breakeven_one_way_bps']:.1f} bp, "
+            f"avg daily gross = {be['avg_daily_gross_return_bps']:.1f} bp"
+        )
+    typer.echo("=" * 70)
 
     # Save results
     _save_results(cfg, results)

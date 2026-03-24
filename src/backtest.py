@@ -10,9 +10,11 @@ import pandas as pd
 
 from .config import Config
 from .constants import ALL_TICKERS, JP_TICKERS, US_TICKERS
+from .cost_model import apply_cost, compute_trading_cost
 from .covariance import compute_cfull
 from .data_loader import build_price_panels, load_raw_data
 from .calendar_align import align_us_jp_dates, build_aligned_dataset
+from .liquidity import apply_liquidity_filter, build_liquidity_mask, liquidity_exclusion_report
 from .metrics import compute_all_metrics
 from .portfolio import build_long_short_weights, compute_portfolio_returns, compute_turnover
 from .returns import close_to_close_return, open_to_close_return
@@ -26,10 +28,13 @@ class BacktestResult:
     """Container for backtest outputs."""
     strategy_name: str
     daily_returns: pd.Series
+    daily_returns_net: pd.Series | None
     weights: pd.DataFrame
     signal: pd.DataFrame
     metrics: dict
+    metrics_net: dict | None
     turnover: pd.Series
+    liquidity_report: pd.DataFrame | None = None
 
 
 def run_backtest(cfg: Config) -> dict[str, BacktestResult]:
@@ -104,11 +109,46 @@ def run_backtest(cfg: Config) -> dict[str, BacktestResult]:
         tickers_all=tickers_all,
     )
 
+    # --- Liquidity filter ---
+    illiquid_mask = None
+    liq_report = None
+    if cfg.liquidity.enabled:
+        logger.info("Building liquidity filter...")
+        # Build JP close and volume panels aligned to us_date index
+        jp_close_for_liq = jp_close_a.copy()
+        jp_close_for_liq.index = pd.to_datetime(date_map["us_date"].values)
+        jp_vol = pd.DataFrame(
+            {t: raw_data[t]["Volume"] for t in JP_TICKERS if t in raw_data}
+        )
+        # Align volume to the same dates
+        jp_vol_aligned = jp_vol.reindex(jp_close.index)
+        # Map to us_date via date_map
+        jp_vol_for_liq = jp_vol_aligned.loc[date_map["jp_date"].values].copy()
+        jp_vol_for_liq.index = pd.to_datetime(date_map["us_date"].values)
+
+        illiquid_mask = build_liquidity_mask(
+            close=jp_close_for_liq,
+            volume=jp_vol_for_liq,
+            min_avg_turnover=cfg.liquidity.min_avg_turnover_jpy,
+            lookback_days=cfg.liquidity.lookback_days,
+        )
+        liq_report = liquidity_exclusion_report(
+            illiquid_mask.loc[cfg.backtest.start_date : cfg.backtest.end_date]
+        )
+        avg_excluded = liq_report["n_excluded"].mean()
+        logger.info(f"  Average tickers excluded per day: {avg_excluded:.1f}")
+
     # Build portfolios and compute returns
     results: dict[str, BacktestResult] = {}
     for name, sig in signals.items():
         logger.info(f"Building portfolio for {name}...")
-        weights = build_long_short_weights(sig, quantile=cfg.strategy.quantile)
+
+        # Apply liquidity filter to signals
+        sig_filtered = sig
+        if cfg.liquidity.enabled and illiquid_mask is not None:
+            sig_filtered = apply_liquidity_filter(sig, illiquid_mask)
+
+        weights = build_long_short_weights(sig_filtered, quantile=cfg.strategy.quantile)
         port_ret = compute_portfolio_returns(weights, jp_oc_aligned)
         turnover = compute_turnover(weights)
 
@@ -121,15 +161,40 @@ def run_backtest(cfg: Config) -> dict[str, BacktestResult]:
         )
         port_ret = port_ret[mask]
 
-        metrics = compute_all_metrics(port_ret)
+        metrics_gross = compute_all_metrics(port_ret)
+
+        # Apply costs
+        daily_returns_net = None
+        metrics_net = None
+        if cfg.cost.enabled:
+            costs = compute_trading_cost(
+                weights=weights.loc[port_ret.index],
+                one_way_bps=cfg.cost.one_way_bps,
+                short_extra_bps=cfg.cost.short_extra_bps,
+                illiquid_mask=illiquid_mask,
+                illiquid_extra_bps=cfg.cost.illiquid_extra_bps,
+            )
+            daily_returns_net = apply_cost(port_ret, costs)
+            metrics_net = compute_all_metrics(daily_returns_net)
+            logger.info(
+                f"  {name} GROSS: AR={metrics_gross['AR']:.2f}%, R/R={metrics_gross['R/R']:.2f}"
+            )
+            logger.info(
+                f"  {name} NET:   AR={metrics_net['AR']:.2f}%, R/R={metrics_net['R/R']:.2f}"
+            )
+        else:
+            logger.info(f"  {name}: AR={metrics_gross['AR']:.2f}%, R/R={metrics_gross['R/R']:.2f}")
+
         results[name] = BacktestResult(
             strategy_name=name,
             daily_returns=port_ret,
+            daily_returns_net=daily_returns_net,
             weights=weights,
-            signal=sig,
-            metrics=metrics,
+            signal=sig_filtered,
+            metrics=metrics_gross,
+            metrics_net=metrics_net,
             turnover=turnover,
+            liquidity_report=liq_report,
         )
-        logger.info(f"  {name}: AR={metrics['AR']:.2f}%, R/R={metrics['R/R']:.2f}")
 
     return results

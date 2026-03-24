@@ -1,0 +1,19 @@
+# Cost + liquidity constraint analysis
+inherit: base.yaml
+
+strategy:
+  window_length: 60
+  lambda_reg: 0.9
+  n_components: 3
+  quantile: 0.3
+
+cost:
+  enabled: true
+  one_way_bps: 5
+  short_extra_bps: 3
+  illiquid_extra_bps: 5
+
+liquidity:
+  enabled: true
+  min_avg_turnover_jpy: 5000000  # 500万円 (realistic for TOPIX-17 ETFs)
+  lookback_days: 20

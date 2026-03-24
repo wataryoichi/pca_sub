@@ -1,0 +1,17 @@
+# Cost analysis configuration
+inherit: base.yaml
+
+strategy:
+  window_length: 60
+  lambda_reg: 0.9
+  n_components: 3
+  quantile: 0.3
+
+cost:
+  enabled: true
+  one_way_bps: 5       # 5bp one-way (realistic for liquid JP ETFs)
+  short_extra_bps: 3   # 3bp extra for short (borrow proxy)
+  illiquid_extra_bps: 5
+
+liquidity:
+  enabled: false
