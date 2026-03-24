@@ -276,6 +276,154 @@ def run_basket_backtest(
 
 
 @app.command()
+def run_phase4(
+    config: str = typer.Option("configs/paper_reproduction.yaml", "--config", "-c"),
+) -> None:
+    """Run Phase 4: final 3 experiments + integration to determine if strategy reaches target."""
+    from pathlib import Path
+    from .phase4_runner import run_all_phase4
+
+    typer.echo("Running Phase 4 experiments (this may take several minutes)...")
+    results = run_all_phase4(config)
+
+    def _fmt(r, label):
+        tn = r.get("sub_n", {}).get("Test", {})
+        tg = r.get("sub_g", {}).get("Test", {})
+        return (
+            f"{label:<28} "
+            f"{r.get('net_AR', float('nan')):>8.2f} {r.get('net_RR', float('nan')):>8.2f} "
+            f"{tn.get('AR', float('nan')):>8.2f} {tn.get('R/R', float('nan')):>8.2f} "
+            f"{r.get('BE', float('nan')):>7.1f} {r.get('days', 0):>6}"
+        )
+
+    hdr = f"{'Config':<28} {'NetAR%':>8} {'NetR/R':>8} {'TestAR%':>8} {'TestR/R':>8} {'BE bp':>7} {'Days':>6}"
+    sep = "-" * 85
+
+    # Exp 1
+    typer.echo(f"\n{'='*85}")
+    typer.echo("EXPERIMENT 1: WALK-FORWARD K SELECTION")
+    typer.echo(f"{'='*85}")
+    typer.echo(f"K distribution: {results['exp1']['k_distribution']}")
+    typer.echo(hdr)
+    typer.echo(sep)
+    typer.echo(_fmt(results["exp1"]["baseline_k3"], "Baseline (K=3 fixed)"))
+    typer.echo(_fmt(results["exp1"]["wf_k"], "Walk-forward K"))
+
+    # Exp 2
+    typer.echo(f"\n{'='*85}")
+    typer.echo("EXPERIMENT 2: COMPOSITE SIGNAL FILTERS")
+    typer.echo(f"{'='*85}")
+    typer.echo(hdr)
+    typer.echo(sep)
+    for name, r in results["exp2"].items():
+        typer.echo(_fmt(r, name))
+
+    # Exp 3
+    typer.echo(f"\n{'='*85}")
+    typer.echo("EXPERIMENT 3: WEIGHT SCHEMES")
+    typer.echo(f"{'='*85}")
+    typer.echo(hdr)
+    typer.echo(sep)
+    for name, r in results["exp3"].items():
+        typer.echo(_fmt(r, name))
+
+    # Final
+    typer.echo(f"\n{'='*85}")
+    typer.echo("FINAL INTEGRATION (BEST COMBINATIONS)")
+    typer.echo(f"{'='*85}")
+    typer.echo(hdr)
+    typer.echo(sep)
+    for name, r in results["final"].items():
+        typer.echo(_fmt(r, name))
+
+    # Judgment
+    typer.echo(f"\n{'='*85}")
+    typer.echo("JUDGMENT")
+    typer.echo(f"{'='*85}")
+    all_test_ar = []
+    all_test_rr = []
+    for section in [results["final"]]:
+        for name, r in section.items():
+            tn = r.get("sub_n", {}).get("Test", {})
+            tar = tn.get("AR", float("nan"))
+            trr = tn.get("R/R", float("nan"))
+            if not (tar != tar):
+                all_test_ar.append((name, tar))
+            if not (trr != trr):
+                all_test_rr.append((name, trr))
+
+    if all_test_ar:
+        best_ar_name, best_ar = max(all_test_ar, key=lambda x: x[1])
+        best_rr_name, best_rr = max(all_test_rr, key=lambda x: x[1])
+        typer.echo(f"Best Test Net AR:  {best_ar:.2f}% ({best_ar_name})")
+        typer.echo(f"Best Test Net R/R: {best_rr:.2f} ({best_rr_name})")
+        typer.echo(f"\nTarget: Test Net AR > 6%, Test Net R/R > 1.2")
+        if best_ar > 6 and best_rr > 1.2:
+            typer.echo(">>> PASS: Strategy reaches main-strategy threshold.")
+        elif best_ar > 4 or best_rr > 0.8:
+            typer.echo(">>> PARTIAL: Sub-strategy viable, but not main-strategy grade.")
+        else:
+            typer.echo(">>> FAIL: Strategy does not reach viable threshold.")
+
+    # Save
+    out = Path("reports/phase4/final_phase4")
+    out.mkdir(parents=True, exist_ok=True)
+    # We'll generate the report in-line
+    _generate_phase4_report(results, out)
+    typer.echo(f"\nReport saved to {out}/")
+
+
+def _generate_phase4_report(results, out_dir):
+    """Generate Phase 4 final findings report."""
+    lines = ["# Phase 4: 最終判断レポート", ""]
+
+    def _table(section_results, title):
+        lines.append(f"## {title}")
+        lines.append("")
+        lines.append("| Config | Full Net AR (%) | Full Net R/R | Test Net AR (%) | Test Net R/R | BE (bp) |")
+        lines.append("|--------|---------------:|------------:|---------------:|------------:|--------:|")
+        for name, r in section_results.items():
+            tn = r.get("sub_n", {}).get("Test", {})
+            lines.append(
+                f"| {name} | {r.get('net_AR', float('nan')):.2f} | {r.get('net_RR', float('nan')):.2f} | "
+                f"{tn.get('AR', float('nan')):.2f} | {tn.get('R/R', float('nan')):.2f} | "
+                f"{r.get('BE', float('nan')):.1f} |"
+            )
+        lines.append("")
+
+    # Exp 1
+    lines.append(f"## Experiment 1: Walk-Forward K")
+    lines.append(f"K distribution: {results['exp1']['k_distribution']}")
+    lines.append("")
+    _table({"K=3 fixed": results["exp1"]["baseline_k3"], "WF-K": results["exp1"]["wf_k"]}, "Exp1 Results")
+
+    _table(results["exp2"], "Experiment 2: Composite Filters")
+    _table(results["exp3"], "Experiment 3: Weight Schemes")
+    _table(results["final"], "Final Integration")
+
+    # Judgment
+    lines.append("## 最終判断")
+    lines.append("")
+    all_combos = list(results["final"].items())
+    best = max(all_combos, key=lambda x: x[1].get("sub_n", {}).get("Test", {}).get("AR", -999))
+    tn = best[1].get("sub_n", {}).get("Test", {})
+    lines.append(f"Best combination: **{best[0]}**")
+    lines.append(f"- Test Net AR: {tn.get('AR', float('nan')):.2f}%")
+    lines.append(f"- Test Net R/R: {tn.get('R/R', float('nan')):.2f}")
+    lines.append("")
+    tar = tn.get("AR", 0)
+    trr = tn.get("R/R", 0)
+    if tar > 6 and trr > 1.2:
+        lines.append("**判定: PASS — 主戦力候補として続行可能**")
+    elif tar > 4 or trr > 0.8:
+        lines.append("**判定: PARTIAL — サブ戦略候補として有効。主戦力には不足。**")
+    else:
+        lines.append("**判定: FAIL — 実務戦略としては不採用。研究成果として保存。**")
+
+    Path(out_dir / "findings.md").write_text("\n".join(lines))
+
+
+@app.command()
 def run_improvement_experiments(
     config: str = typer.Option("configs/paper_reproduction.yaml", "--config", "-c"),
 ) -> None:
