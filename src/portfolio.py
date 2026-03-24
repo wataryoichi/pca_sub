@@ -113,6 +113,61 @@ def build_rebalance_weights(
     return weights
 
 
+def build_blended_weights(
+    signal: pd.DataFrame,
+    quantile: float = 0.3,
+    blend_alpha: float = 0.5,
+) -> pd.DataFrame:
+    """Build weights by blending previous weights with ideal new weights.
+
+    new_w_t = (1 - alpha) * prev_w_{t-1} + alpha * ideal_w_t
+
+    Then re-normalize to maintain zero net exposure and gross = 2.
+
+    Lower alpha = more inertia = less turnover.
+    alpha = 1.0 is equivalent to full daily rebalance.
+
+    Args:
+        signal: (date x JP tickers) signal DataFrame
+        quantile: q for long/short
+        blend_alpha: Blending parameter in (0, 1]
+
+    Returns:
+        (date x JP tickers) blended weight DataFrame
+    """
+    ideal = build_long_short_weights(signal, quantile)
+    weights = pd.DataFrame(0.0, index=ideal.index, columns=ideal.columns)
+
+    prev_w = None
+    for i, date in enumerate(ideal.index):
+        ideal_w = ideal.loc[date].values.copy()
+        if prev_w is None:
+            blended = ideal_w.copy()
+        else:
+            blended = (1 - blend_alpha) * prev_w + blend_alpha * ideal_w
+
+        # Re-normalize: zero net, gross = 2
+        # Separate long and short
+        long_mask = blended > 0
+        short_mask = blended < 0
+
+        if long_mask.sum() > 0 and short_mask.sum() > 0:
+            long_sum = blended[long_mask].sum()
+            short_sum = abs(blended[short_mask].sum())
+            if long_sum > 1e-12:
+                blended[long_mask] *= 1.0 / long_sum
+            if short_sum > 1e-12:
+                blended[short_mask] *= 1.0 / short_sum
+        elif np.abs(blended).sum() > 1e-12:
+            # All same sign or edge case: just normalize
+            blended = blended / (np.abs(blended).sum() / 2)
+
+        weights.iloc[i] = blended
+        prev_w = blended.copy()
+
+    return weights
+
+
 def compute_turnover(weights: pd.DataFrame) -> pd.Series:
     """Compute daily turnover as sum of absolute weight changes."""
     diff = weights.diff().abs().sum(axis=1)
